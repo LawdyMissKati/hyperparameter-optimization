@@ -16,3 +16,11 @@ Only the training data (25,000 reviews) should be used for the 4-fold validation
 - For each of the top 3 sets of options, generate predictions on the test data (this should be the first time you use the test data). Evaluate the performance of the 3 options, compare their ranking to that on the validation data, and comment on the results.
 
 Use the newswires classification data and repeat the experiment outlined above. You need to design your own set of 12 options to consider and validate. Some of your options must illustrate overfitting, others must illustrate underfitting, and others should have a good generalization.
+
+The datasets were too large for GitHub's limit:
+
+imbd_data
+https://drive.google.com/drive/folders/1VEjdddS-AHYJ6NzvrhgQnXsu1RrBYYWc?usp=sharing
+
+news_wire_data
+https://drive.google.com/drive/folders/1NF_VlL4SHtJuVupWeHf5w7KFGLI7nJNw?usp=sharing

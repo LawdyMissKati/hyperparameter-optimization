@@ -1,0 +1,372 @@
+import numpy as np
+import pandas as pd
+import tensorflow.keras as keras
+from keras import models, layers, optimizers, backend as K
+from sklearn.model_selection import KFold
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras import regularizers
+
+# load imdb dataset
+train_data = pd.read_csv('imdb_data/imdb_train.csv')
+train_labels = pd.read_csv('imdb_data/imdb_y_train.csv')
+test_data = pd.read_csv('imdb_data/imdb_test.csv')
+test_labels = pd.read_csv('imdb_data/imdb_y_test.csv')
+
+# convert the input data and labels to NumPy arrays.
+x_train = np.asarray(train_data).astype('float32')
+y_train = np.asarray(train_labels).astype('float32').ravel() # ensures 1D array
+x_test = np.array(test_data).astype('float32')
+y_test = np.asarray(test_labels).astype('float32').ravel()
+
+# Define hyperparameters to tune
+hidden_layer_options = [
+    [1],                # 1 layer, 1 node
+    [16, 4],            # 2 layers, 16 nodes & 4 nodes
+    [32, 16, 8, 4]      # 4 layers, 32 → 16 → 8 → 4 nodes
+]
+
+learning_rate_options = [0.1, 0.001, 0.00001]
+input_dim_options = [10000, 1000]  # Number of words/features in input (input shape)
+
+# Function to create dynamic model with variable hyperparameters
+def create_model(hidden_layers, learning_rate, input_dim):
+    model = models.Sequential()
+    
+    # Input layer
+    model.add(layers.Dense(hidden_layers[0], activation='relu', input_shape=(input_dim,)))
+    
+    # Hidden layers
+    for nodes in hidden_layers[1:]:
+        model.add(layers.Dense(nodes, activation='relu'))
+    
+    # Output layer (Binary Classification)
+    model.add(layers.Dense(1, activation='sigmoid'))
+    
+    # Compile the model
+    model.compile(optimizer=optimizers.RMSprop(learning_rate=learning_rate), 
+                  loss='binary_crossentropy',
+                  metrics=['binary_accuracy'])
+    
+    return model
+
+# Define KFold cross-validation
+kf = KFold(n_splits=4, shuffle=True, random_state=123)
+
+results = []
+
+# Iterate through each combination of hidden layers, learning rate, and input shape.
+for hidden_layers in hidden_layer_options:
+    for learning_rate in learning_rate_options:
+        for input_dim in input_dim_options:
+            print(f"Training model: Hidden Layers={hidden_layers}, Learning Rate={learning_rate}, Input Dim={input_dim}")
+
+            # Select a subset of words/features (1000 or 10000)
+            X_train_subset = x_train[:, :input_dim]
+
+            # store accuracy scores for each fold.
+            fold_accuracies = []
+
+            # Splitting Data into Training and Validation Sets
+            for train_idx, val_idx in kf.split(X_train_subset):                
+                partial_x_train, x_val = X_train_subset[train_idx], X_train_subset[val_idx]
+                partial_y_train, y_val = y_train[train_idx], y_train[val_idx]
+
+                # The training process will continue for 3 additional epochs after the validation stops improving.
+                early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+                
+                # Train model
+                model = create_model(hidden_layers, learning_rate, input_dim)
+                history = model.fit(
+                    partial_x_train, 
+                    partial_y_train, 
+                    epochs=20, 
+                    batch_size=128, 
+                    validation_data=(x_val, y_val),
+                    callbacks=[early_stopping],
+                    verbose=0)
+
+                # Extract training metrics from dictionary storing lists of metric values for each epoch.
+                history_dict = history.history
+                acc = history_dict['binary_accuracy']
+                val_acc = history_dict['val_binary_accuracy']
+                loss = history_dict['loss']
+                val_loss = history_dict['val_loss']
+                
+                epochs = range(1, len(acc) + 1)
+
+                # Plot Training and Validation Loss and Accuracy in a single row
+                fig, ax = plt.subplots(1, 2, figsize=(20, 5))
+                
+                # Training and Validation Loss
+                ax[0].plot(epochs, loss, 'bo-', label='Training loss')
+                ax[0].plot(epochs, val_loss, 'go-', label='Validation loss')
+                ax[0].set_title('Training and Validation Loss')
+                ax[0].set_xlabel('Epochs')
+                ax[0].set_ylabel('Loss')
+                ax[0].legend()
+                
+                # Training and Validation Accuracy
+                ax[1].plot(epochs, acc, 'bo-', label='Training acc')
+                ax[1].plot(epochs, val_acc, 'go-', label='Validation acc')
+                ax[1].set_title('Training and Validation Accuracy')
+                ax[1].set_xlabel('Epochs')
+                ax[1].set_ylabel('Accuracy')
+                ax[1].legend()
+                
+                plt.show()
+                
+                fold_accuracies.append(max(val_acc))
+
+            # Store results
+            avg_accuracy = np.mean(fold_accuracies)
+            results.append((hidden_layers, learning_rate, input_dim, avg_accuracy))
+            print(f"Avg Validation Accuracy for this setting: {avg_accuracy:.4f}")
+
+# Sort results by accuracy in descending order
+results.sort(key=lambda x: x[3], reverse=True)
+
+# Print best settings
+print("\nTop Hyperparameter Settings:")
+for r in results[:3]:  # Top 3 configurations
+    print(f"Layers={r[0]}, LR={r[1]}, Input={r[2]}, Accuracy={r[3]:.4f}")
+
+# Training model: Layers=[1], LR=0.001, Input=10000, Validation Accuracy=0.8864, Best Epoch=5
+model = models.Sequential()
+model.add(layers.Dense(1, activation='relu', input_shape=(10000,)))  
+model.add(layers.Dense(1, activation='sigmoid'))  # Output layer
+
+model.compile(optimizer=optimizers.RMSprop(learning_rate=0.001),  
+              loss='binary_crossentropy',
+              metrics=['accuracy'])
+
+model.fit(x_train, y_train, epochs=5, batch_size=128)
+results = model.evaluate(x_test, y_test)
+
+model.predict(x_test)
+results
+
+# Training model: Layers=[16, 4], LR=0.001, Input=10000, Best Epoch=2
+model = models.Sequential()
+model.add(layers.Dense(16, activation='relu', input_shape=(10000,)))  
+model.add(layers.Dense(4, activation='relu'))  
+model.add(layers.Dense(1, activation='sigmoid'))  
+
+model.compile(optimizer=optimizers.RMSprop(learning_rate=0.001),  
+              loss='binary_crossentropy',
+              metrics=['accuracy'])
+
+model.fit(x_train, y_train, epochs=2, batch_size=128)
+results = model.evaluate(x_test, y_test)
+
+model.predict(x_test)
+results
+
+# Training model: Layers=[32, 16, 8, 4], LR=0.001, Input=10000, Best Epoch=2
+model = models.Sequential()
+model.add(layers.Dense(32, activation='relu', input_shape=(10000,)))  
+model.add(layers.Dense(16, activation='relu'))  
+model.add(layers.Dense(8, activation='relu'))  
+model.add(layers.Dense(4, activation='relu'))  
+model.add(layers.Dense(1, activation='sigmoid'))  
+
+model.compile(optimizer=optimizers.RMSprop(learning_rate=0.001),  
+              loss='binary_crossentropy',
+              metrics=['accuracy'])
+
+model.fit(x_train, y_train, epochs=2, batch_size=128)
+results = model.evaluate(x_test, y_test)
+
+model.predict(x_test)
+results
+
+# load news wire dataset
+news_train_data = pd.read_csv('news_wire_data/news_train.csv')
+news_train_labels = pd.read_csv('news_wire_data/news_train_labels.csv')
+news_test_data = pd.read_csv('news_wire_data/news_test.csv')
+news_test_labels = pd.read_csv('news_wire_data/news_test_labels.csv')
+
+# Vectorize data and labels
+news_x_train = np.asarray(news_train_data)
+news_x_test = np.array(news_test_data)
+
+news_y_train = np.argmax(news_train_labels, axis=1)  # Convert back to integer labels
+news_y_test = np.argmax(news_test_labels, axis=1)
+
+def to_one_hot(labels, dimension=46):
+    results = np.zeros((len(labels), dimension))
+    for i, label in enumerate(labels):
+        results[i, label] = 1.
+    return results
+
+# Our vectorized training labels
+one_hot_train_labels = to_one_hot(news_y_train)
+# Our vectorized test labels
+one_hot_test_labels = to_one_hot(news_y_test)
+
+# Define hyperparameters to tune
+news_hidden_layer_options = [
+    [4],                # 1 layer, 4 nodes
+    [16, 4],            # 2 layers, 16 nodes & 4 nodes
+    [32, 16, 8],        # 3 layers, 32 → 16 → 8 nodes
+]
+news_learning_rate_options = [0.1, 0.01, 0.001]
+news_batch_size_options = [128, 256, 512]
+news_regularizers_options = [0.1, 0.01, 0.001]
+
+# Function to create dynamic model with variable hyperparameters
+def create_news_model(hidden_layers, learning_rate, regularizer):
+    
+    model = models.Sequential()
+    model.add(layers.Dense(hidden_layers[0], activation='relu', kernel_regularizer=regularizers.l2(regularizer), input_shape=(10000,)))
+    for nodes in hidden_layers[1:]:
+        model.add(layers.Dense(nodes, activation='relu', kernel_regularizer=regularizers.l2(regularizer)))
+    model.add(layers.Dense(46, activation='softmax'))
+    
+    # Compile the model
+    model.compile(optimizer=optimizers.RMSprop(learning_rate=learning_rate),
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy'])
+    
+    return model
+
+# Define KFold cross-validation
+kf = KFold(n_splits=4, shuffle=True, random_state=42)
+
+results = []
+
+# Iterate through each combination of hidden layers, learning rate, and input shape.
+for hidden_layers in news_hidden_layer_options:
+    for learning_rate in news_learning_rate_options:
+        for batch_size in news_batch_size_options:
+            for regularizer in news_regularizers_options:
+                print(f"Training model: Hidden Layers={hidden_layers}, Learning Rate={learning_rate}, Batch Size={batch_size}, regularizer={regularizer}")
+                
+                fold_accuracies = []
+    
+                for train_idx, val_idx in kf.split(news_x_train):
+                    # Create training and validation sets
+                    partial_x_train, x_val = news_x_train[train_idx], news_x_train[val_idx]
+                    partial_y_train, y_val = one_hot_train_labels[train_idx], one_hot_train_labels[val_idx]
+    
+                    # Define early stopping to prevent overfitting
+                    early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=7, restore_best_weights=True)
+    
+                    # Train model
+                    model = create_news_model(hidden_layers, learning_rate, regularizer)
+                    history = model.fit(
+                        partial_x_train, 
+                        partial_y_train, 
+                        epochs=20, 
+                        batch_size=batch_size, 
+                        validation_data=(x_val, y_val),
+                        callbacks=[early_stopping],
+                        verbose=0)
+    
+                    history_dict = history.history
+                    acc = history_dict['accuracy']
+                    val_acc = history_dict['val_accuracy']
+                    loss = history_dict['loss']
+                    val_loss = history_dict['val_loss']
+                    
+                    epochs = range(1, len(acc) + 1)
+    
+                    # Plot Training and Validation Loss and Accuracy in a single row
+                    fig, ax = plt.subplots(1, 2, figsize=(20, 5))
+                    
+                    # Training and Validation Loss
+                    ax[0].plot(epochs, loss, 'bo-', label='Training loss')
+                    ax[0].plot(epochs, val_loss, 'go-', label='Validation loss')
+                    ax[0].set_title('Training and Validation Loss')
+                    ax[0].set_xlabel('Epochs')
+                    ax[0].set_ylabel('Loss')
+                    ax[0].legend()
+                    
+                    # Training and Validation Accuracy
+                    ax[1].plot(epochs, acc, 'bo-', label='Training acc')
+                    ax[1].plot(epochs, val_acc, 'go-', label='Validation acc')
+                    ax[1].set_title('Training and Validation Accuracy')
+                    ax[1].set_xlabel('Epochs')
+                    ax[1].set_ylabel('Accuracy')
+                    ax[1].legend()
+                    
+                    plt.show()
+                    
+                    fold_accuracies.append(max(val_acc))
+
+                # Store results
+                avg_accuracy = np.mean(fold_accuracies)
+                results.append((hidden_layers, learning_rate, batch_size, regularizer, avg_accuracy))
+                print(f"Avg Validation Accuracy for this setting: {avg_accuracy:.4f}")
+
+# Sort results by accuracy in descending order
+results.sort(key=lambda x: x[4], reverse=True)
+
+# Print best settings
+print("\nTop Hyperparameter Settings:")
+for r in results[:3]:  # Top 3 configurations
+    print(f"Layers={r[0]}, LR={r[1]}, batch_size={r[2]}, regularizer={r[3]}, Accuracy={r[4]:.4f}")
+
+# Training model: Layers=[32, 16, 8], LR=0.01, batch_size=512, regularizer=0.001, Accuracy=0.7623
+model = models.Sequential()
+model.add(layers.Dense(32, activation='relu', kernel_regularizer=regularizers.l2(0.001), input_shape=(10000,)))
+model.add(layers.Dense(16, activation='relu', kernel_regularizer=regularizers.l2(0.001)))
+model.add(layers.Dense(8, activation='relu', kernel_regularizer=regularizers.l2(0.001)))
+model.add(layers.Dense(46, activation='softmax'))
+    
+# Compile the model
+model.compile(optimizer=optimizers.RMSprop(learning_rate=0.01),
+            loss='categorical_crossentropy',
+            metrics=['accuracy'])
+
+model.fit(news_x_train,
+          one_hot_train_labels,
+          epochs=5,
+          batch_size=256)
+results = model.evaluate(news_x_test, one_hot_test_labels)
+
+model.predict(news_x_test)
+results
+
+# Training model: Layers=[32, 16, 8], LR=0.001, batch_size=128, regularizer=0.001, Accuracy=0.7413
+model = models.Sequential()
+model.add(layers.Dense(32, activation='relu', kernel_regularizer=regularizers.l2(0.001), input_shape=(10000,)))
+model.add(layers.Dense(16, activation='relu', kernel_regularizer=regularizers.l2(0.001)))
+model.add(layers.Dense(8, activation='relu', kernel_regularizer=regularizers.l2(0.001)))
+model.add(layers.Dense(46, activation='softmax'))
+    
+# Compile the model
+model.compile(optimizer=optimizers.RMSprop(learning_rate=0.001),
+            loss='categorical_crossentropy',
+            metrics=['accuracy'])
+
+model.fit(news_x_train,
+          one_hot_train_labels,
+          epochs=4,
+          batch_size=128)
+results = model.evaluate(news_x_test, one_hot_test_labels)
+
+model.predict(news_x_test)
+results
+
+# Training model: Layers=[32, 16, 8], LR=0.01, batch_size=128, regularizer=0.001, Accuracy=0.7605
+model = models.Sequential()
+model.add(layers.Dense(32, activation='relu', kernel_regularizer=regularizers.l2(0.001), input_shape=(10000,)))
+model.add(layers.Dense(16, activation='relu', kernel_regularizer=regularizers.l2(0.001)))
+model.add(layers.Dense(8, activation='relu', kernel_regularizer=regularizers.l2(0.001)))
+model.add(layers.Dense(46, activation='softmax'))
+    
+# Compile the model
+model.compile(optimizer=optimizers.RMSprop(learning_rate=0.01),
+            loss='categorical_crossentropy',
+            metrics=['accuracy'])
+
+model.fit(news_x_train,
+          one_hot_train_labels,
+          epochs=3,
+          batch_size=128)
+results = model.evaluate(news_x_test, one_hot_test_labels)
+
+model.predict(news_x_test)
+results
